@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+data/*.csv
+data/*.pkl
+data/*.zip
+*.pkl
+mlruns/
+
+# Virtual environments
+.venv
+.lock
+.toml
+data/
+*.csv
+*.pkl
+*.zip
+.ipynb_checkpoints/
+mlruns/
