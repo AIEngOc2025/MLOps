@@ -31,7 +31,7 @@ MLOps/
 
 ---
 
-## 🧠 Modèle
+## Modèle
 
 | Paramètre | Valeur |
 |---|---|
@@ -56,7 +56,7 @@ MLOps/
 
 ---
 
-## 🚀 Lancement rapide
+##  Lancement rapide
 
 ### Prérequis
 
@@ -95,7 +95,7 @@ docker compose up -d --build
 
 ---
 
-## 📡 API — Endpoints
+##  API — Endpoints
 
 ### `GET /health`
 
@@ -149,7 +149,7 @@ curl -X POST http://localhost:8000/predict/batch \
 
 ---
 
-## 🧪 Tests
+##  Tests
 
 ```bash
 # Lancer tous les tests
@@ -163,7 +163,7 @@ Les tests couvrent : health check, prédiction unitaire, batch, labels de risque
 
 ---
 
-## 🐳 Docker
+##  Docker
 
 Le `Dockerfile` utilise un **build multi-stage** :
 
@@ -183,15 +183,15 @@ docker run -p 8000:8000 -v $(pwd)/models:/app/models:ro credit-scoring-api:lates
 
 ---
 
-## ⚙️ CI/CD — GitHub Actions
+##  CI/CD — GitHub Actions
 
 Le pipeline (`.github/workflows/ci-cd.yml`) s'exécute automatiquement à chaque push.
 
 ```
 push / PR
     │
-    ▼
-🧪 Tests pytest ──── ÉCHEC ──► ❌ Pipeline bloqué
+  ▼
+ Tests pytest ──── ÉCHEC ──► ❌ Pipeline bloqué
     │
    OK
     │
@@ -199,7 +199,7 @@ push / PR
 🐳 Build Docker ──► Push sur ghcr.io (GitHub Container Registry)
     │
     ▼ (main uniquement)
-🚀 Déploiement ──► Smoke tests /health + /predict sur le conteneur
+Déploiement ──► Smoke tests /health + /predict sur le conteneur
 ```
 
 **3 jobs séquentiels :**
@@ -218,7 +218,7 @@ push / PR
 
 ---
 
-## 🔧 Variables d'environnement
+##  Variables d'environnement
 
 | Variable | Défaut | Description |
 |---|---|---|
@@ -228,7 +228,7 @@ push / PR
 
 ---
 
-## 📦 Régénérer les modèles
+##  Régénérer les modèles
 
 Si les artefacts `models/` sont absents ou corrompus, relancez la cellule de sauvegarde dans `notebooks/fine_tuning.ipynb` :
 
