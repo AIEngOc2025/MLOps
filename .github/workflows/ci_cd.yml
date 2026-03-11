@@ -119,4 +119,3 @@ jobs:
             sleep 6
           done
           echo "❌ API non disponible après 120s" && exit 1
-          
