@@ -42,14 +42,14 @@ jobs:
     name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'||github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     steps:
       - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Important pour le push Git
+          fetch-depth: 0
 
-      - name: Configurer Git LFS et Pousser vers HF
+      - name: Configurer Git LFS, README et Pousser
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
@@ -57,21 +57,39 @@ jobs:
           # 1. Installation de Git LFS
           git lfs install
           
-          # 2. Déclaration des fichiers lourds pour LFS
+          # 2. Configuration de l'identité Git
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+
+          # 3. Création forcée du README.md avec les métadonnées YAML pour HF
+          # Cela évite le "Configuration Error" en forçant le mode Docker
+          cat <<EOF > README.md
+          ---
+          title: Credit Score API
+          emoji: 💰
+          colorFrom: blue
+          colorTo: green
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          ---
+
+          # Credit Scoring API
+          Déploiement automatique via GitHub Actions.
+          EOF
+
+          # 4. Déclaration LFS et ajout des fichiers
           git lfs track "*.joblib"
           git lfs track "*.pkl"
           git lfs track "*.db"
           
-          # 3. Configuration de l'identité
-          git config user.email "ci@github.com"
-          git config user.name "GitHub Actions"
-          
-          # 4. Ajout du fichier .gitattributes (créé par lfs track) et push
-          git add .gitattributes
-          # On force l'ajout des fichiers au cas où ils seraient dans le .gitignore local
+          git add .gitattributes README.md
           git add models/*.joblib models/*.pkl 2>/dev/null || true
           
-          git commit -m "deploy: update model and app ${{ github.sha }}" || echo "No changes to commit"
+          # 5. Commit et Push
+          # On s'assure d'être sur la branche main localement pour le push
+          git checkout -b main || git checkout main
+          git commit -m "deploy: update model, metadata and app ${{ github.sha }}" || echo "No changes to commit"
           
-          # 5. Push vers HF (on utilise l'URL avec token)
+          # Push vers le repository Space de Hugging Face
           git push --force https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score main
