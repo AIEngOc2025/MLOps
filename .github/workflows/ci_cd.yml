@@ -97,50 +97,29 @@ jobs:
 
       - name: Préparer le dossier de déploiement minimal
         run: |
+          # Créer un dossier propre avec uniquement ce dont HF a besoin
           mkdir hf_deploy
-          cp Dockerfile requirements.txt hf_deploy/
-          cp -r src/ hf_deploy/src/
-          
-          # On crée le dossier models mais on ne copie QUE les fichiers non-binaires
-          # ou on le laisse vide avec un .gitkeep
-          mkdir -p hf_deploy/models
-          touch hf_deploy/models/.gitkeep
-          
-          # Si tu as besoin de petits fichiers de configuration dans models, 
-          # copie-les spécifiquement, mais SURTOUT PAS les .joblib ou .pkl
-          # cp models/config.json hf_deploy/models/ 2>/dev/null || true
+          cp Dockerfile        hf_deploy/
+          cp requirements.txt  hf_deploy/
+          cp -r src/           hf_deploy/src/
+          cp -r models/        hf_deploy/models/
 
       - name: Configurer Git et pousser vers HF
         run: |
           cd hf_deploy
           git init
-          # On crée un .gitignore local pour être doublement sûr
-          echo "*.joblib" > .gitignore
-          echo "*.pkl" >> .gitignore
-          echo "*.db" >> .gitignore
-          echo "mlruns/" >> .gitignore
-          
           git config user.email "ci@github.com"
           git config user.name  "GitHub Actions"
           git add .
-          git commit -m "deploy: ${{ github.sha }} (clean build)"
-          
-          # Push forcé vers le main de Hugging Face
+          git commit -m "deploy: ${{ github.sha }}"
           git push --force https://${{ secrets.HF_USERNAME }}:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/${{ secrets.HF_USERNAME }}/Credit_Score main
 
       - name: Vérifier que l'API répond sur HF (/health)
         run: |
-          # On attend 30s avant de commencer à tester (temps de build HF)
-          sleep 30
           for i in $(seq 1 20); do
-            # Note: l'URL Hugging Face transforme souvent les '_' en '-' dans le nom du Space
-            URL="https://${{ secrets.HF_USERNAME }}-credit-score.hf.space/health"
-            if curl -sf "$URL"; then
-              echo "✅ API opérationnelle sur Hugging Face"
-              exit 0
-            fi
-            echo "⏳ Attente reconstruction HF... ($i/20) sur $URL"
-            sleep 10
+            curl -sf https://${{ secrets.HF_USERNAME }}-credit-score.hf.space/health \
+              && echo "✅ API opérationnelle sur Hugging Face" && exit 0
+            echo "⏳ Attente reconstruction HF... ($i/20)"
+            sleep 6
           done
-          echo "❌ API non disponible après 200s"
-          exit 1
+          echo "❌ API non disponible après 120s" && exit 1
