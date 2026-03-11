@@ -108,7 +108,7 @@ jobs:
 
           # Pousser la branche main vers HF
           # HF reconstruit automatiquement l'image Docker après ce push
-          git push huggingface main --force
+          git push huggingface HEAD:main --force
 
       - name: Vérifier que l'API répond sur Hugging Face (/health)
         run: |
