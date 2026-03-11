@@ -18,12 +18,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# ─── CONFIGURATION ────────────────────────────────────────────────────────────
+# ─── CONFIGURATION ML ────────────────────────────────────────────────────────────
 BASE_DIR          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR        = os.path.join(BASE_DIR, "models/")
 OPTIMAL_THRESHOLD = float(os.getenv("OPTIMAL_THRESHOLD", 0.48))
 
-# ─── CHARGEMENT DES ARTEFACTS ─────────────────────────────────────────────────
+# ─── CHARGEMENT DES ARTEFACTS ML ─────────────────────────────────────────────────
 try:
     preprocessor      = joblib.load(os.path.join(MODELS_DIR, "preprocessor.pkl"))
     SELECTED_FEATURES = joblib.load(os.path.join(MODELS_DIR, "selected_features.pkl"))
