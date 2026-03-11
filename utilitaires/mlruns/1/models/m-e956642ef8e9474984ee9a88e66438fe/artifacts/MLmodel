@@ -1,0 +1,23 @@
+artifact_path: /Users/mpaga/OC/MLOps/utilitaires/mlruns/1/models/m-e956642ef8e9474984ee9a88e66438fe/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.13.0
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.10.1
+model_id: m-e956642ef8e9474984ee9a88e66438fe
+model_size_bytes: 700
+model_uuid: m-e956642ef8e9474984ee9a88e66438fe
+prompts: null
+run_id: 33f792776c39483fbf02c81d718390d6
+utc_time_created: '2026-03-11 17:38:08.241497'
