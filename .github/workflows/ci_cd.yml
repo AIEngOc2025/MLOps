@@ -87,7 +87,7 @@ jobs:
     name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
     needs: build                  # bloqué si `build` échoue
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'  # déploiement sur main et dev
+   # déploiement sur main et dev
 
     steps:
       - name: Récupérer le code source
