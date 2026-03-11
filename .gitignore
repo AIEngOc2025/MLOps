@@ -1,23 +1,64 @@
-# Python-generated files
+# ── PYTHON ───────────────────────────────────────────────────────────────────
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-data/*.csv
-data/*.pkl
-data/*.zip
-*.pkl
-mlruns/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
+*.ipynb
 
-# Virtual environments
+# ── ENVIRONNEMENTS VIRTUELS ──────────────────────────────────────────────────
+.env
 .venv
-.lock
-.toml
-data/
-*.csv
-*.pkl
-*.zip
-.ipynb_checkpoints/
-mlruns/
+env/
+venv/
+ENV/
+bin/
+lib/
+develop-eggs/
+dist/
+eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+
+# ── DONNÉES ET MODÈLES (TRÈS IMPORTANT) ──────────────────────────────────────
+# On ne versionne pas les fichiers binaires lourds
+#models/*.joblib
+#models/*.pkl
+#models/*.pth
+#models/*.h5
+data/*.csv
+data/*.parquet
+data/*.json
+!data/.gitkeep  # Permet de garder le dossier data vide sur Git
+
+# ── TESTS ET COUVERTURE ──────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# ── DOCKER ───────────────────────────────────────────────────────────────────
+.dockerignore
+# Note : On ne met généralement pas le docker-compose.yml ici 
+# sauf s'il contient des secrets.
+
+# ── VARIABLES D'ENVIRONNEMENT (SÉCURITÉ) ─────────────────────────────────────
+.env
+.env.local
+.env.dev
+.env.test
+.env.prod
+
+# ── SYSTÈME ET EDITEURS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
