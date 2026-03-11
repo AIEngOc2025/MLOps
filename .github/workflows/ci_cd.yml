@@ -104,7 +104,7 @@ jobs:
       - name: Pousser le code vers Hugging Face Spaces
         run: |
           # Ajouter le remote Hugging Face avec le token d'authentification
-          git remote add huggingface https://${{ secrets.HF_USERNAME }}:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/${{ secrets.HF_USERNAME }}/Credit-Score
+          git remote add huggingface https://${{ secrets.HF_USERNAME }}:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/${{ secrets.HF_USERNAME }}/Credit_Score
 
           # Pousser la branche main vers HF
           # HF reconstruit automatiquement l'image Docker après ce push
