@@ -1,0 +1,40 @@
+services:
+  # ── API FastAPI ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: credit-scoring-api:latest
+    container_name: credit-scoring-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OPTIMAL_THRESHOLD=0.48
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./models:/app/models:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Interface Gradio ─────────────────────────────────────────────────────────
+  gradio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: credit-scoring-gradio:latest
+    container_name: credit-scoring-gradio
+    ports:
+      - "7860:7860"
+    environment:
+      - API_URL=http://api:8000
+    # On s'assure que le chemin vers le fichier correspond à ton arborescence (src/gradio_ui.py)
+    command: python src/gradio_ui.py
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
