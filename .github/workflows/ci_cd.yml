@@ -86,33 +86,34 @@ jobs:
   deploy:
     name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
-    needs: build                  # bloqué si `build` échoue
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'    # déploiement uniquement sur main
-    
+    needs: build
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Récupérer le code source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # historique complet nécessaire pour git push
 
-      - name: Configurer Git
+      - name: Préparer le dossier de déploiement minimal
         run: |
+          # Créer un dossier propre avec uniquement ce dont HF a besoin
+          mkdir hf_deploy
+          cp Dockerfile        hf_deploy/
+          cp requirements.txt  hf_deploy/
+          cp -r src/           hf_deploy/src/
+          cp -r models/        hf_deploy/models/
+
+      - name: Configurer Git et pousser vers HF
+        run: |
+          cd hf_deploy
+          git init
           git config user.email "ci@github.com"
           git config user.name  "GitHub Actions"
+          git add .
+          git commit -m "deploy: ${{ github.sha }}"
+          git push --force https://${{ secrets.HF_USERNAME }}:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/${{ secrets.HF_USERNAME }}/Credit_Score main
 
-      - name: Pousser le code vers Hugging Face Spaces
+      - name: Vérifier que l'API répond sur HF (/health)
         run: |
-          # Ajouter le remote Hugging Face avec le token d'authentification
-          git remote add huggingface https://${{ secrets.HF_USERNAME }}:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/${{ secrets.HF_USERNAME }}/Credit_Score
-
-          # Pousser la branche main vers HF
-          # HF reconstruit automatiquement l'image Docker après ce push
-          git push huggingface HEAD:main --force
-
-      - name: Vérifier que l'API répond sur Hugging Face (/health)
-        run: |
-          # Attendre que HF reconstruise et démarre le conteneur (max 120s)
           for i in $(seq 1 20); do
             curl -sf https://${{ secrets.HF_USERNAME }}-credit-score.hf.space/health \
               && echo "✅ API opérationnelle sur Hugging Face" && exit 0
