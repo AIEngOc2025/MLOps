@@ -1,3 +1,18 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# .github/workflows/ci.yml — Pipeline CI/CD Credit Scoring API
+#
+# Jobs (séquentiels) :
+#   1. test   → pytest via Docker (--target test)
+#   2. build  → image prod → Docker Hub
+#   3. deploy → upload vers Hugging Face Spaces via huggingface_hub Python
+#
+# Secrets GitHub requis :
+#   DOCKER_USERNAME : identifiant Docker Hub
+#   DOCKER_PASSWORD : token Docker Hub Read & Write
+#   HF_USERNAME     : identifiant Hugging Face
+#   HF_TOKEN        : token Hugging Face Read & Write
+# ═══════════════════════════════════════════════════════════════════════════════
+
 name: CI/CD — Credit Scoring API
 
 on:
@@ -8,26 +23,42 @@ on:
 
 env:
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/credit-scoring-api
-  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_TAG:  ${{ github.sha }}
+
 
 jobs:
-  # --- JOB 1 : TESTS ---
+
+# ─── Job 1 : TESTS ────────────────────────────────────────────────────────────
+# Lance pytest à l'intérieur du stage Docker "test".
+# Si un test échoue → jobs suivants bloqués.
   test:
     name: 🧪 Tests
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Lancer les tests via Docker
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+        with:
+          lfs: true             # télécharge le contenu réel des fichiers LFS
+
+      - name: Lancer les tests via Docker (--target test)
         run: docker build --target test .
 
-  # --- JOB 2 : BUILD & PUSH DOCKER HUB ---
+
+# ─── Job 2 : BUILD & PUSH DOCKER HUB ─────────────────────────────────────────
+# Construit l'image prod et la pousse sur Docker Hub.
+# Ne s'exécute QUE si test réussi et sur un push (pas sur PR).
   build:
     name: 🐳 Build & Push
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'push'
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Login Docker Hub
         uses: docker/login-action@v3
@@ -35,70 +66,110 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push (SHA + latest)
+      - name: Build image production (--target app)
         run: |
           docker build --target app \
             -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
             -t ${{ env.IMAGE_NAME }}:latest \
             .
+
+      - name: Push image sur Docker Hub (SHA + latest)
+        run: |
           docker push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-  # --- JOB 3 : DEPLOY TO HUGGING FACE ---
+
+# ─── Job 3 : DÉPLOIEMENT → HUGGING FACE SPACES ────────────────────────────────
+# Upload le code vers HF Spaces via l'API Python huggingface_hub.
+# Avantages vs git push :
+#   - Pas de problèmes LFS / binaires
+#   - Contrôle précis des fichiers uploadés via ignore_patterns
+#   - HF reconstruit automatiquement l'image Docker après l'upload
+#
+# Déclenché uniquement sur push vers main ou dev (pas sur PR).
   deploy:
     name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
     needs: build
-    # Déploiement uniquement sur push vers main ou dev
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+
     steps:
       - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: true # On récupère les vrais fichiers pour l'upload
+          lfs: true             # nécessaire pour récupérer les vrais .pkl/.joblib
 
       - name: Configurer Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Installer Hugging Face Hub
+      - name: Installer huggingface_hub
         run: pip install huggingface_hub
 
-      - name: Upload vers Hugging Face Spaces
+      - name: Vérifier la présence du token HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           if [ -z "$HF_TOKEN" ]; then
-            echo "ERREUR : Le secret HF_TOKEN est absent."
+            echo "❌ ERREUR : Le secret HF_TOKEN est absent."
             exit 1
           fi
-          python -c "
+          echo "✅ Token HF présent"
+
+      - name: Upload vers Hugging Face Spaces
+        env:
+          HF_TOKEN:    ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+        run: |
+          python - <<'EOF'
           import os
           from huggingface_hub import HfApi
-          
-          api = HfApi(token=os.environ['HF_TOKEN'])
-          # Remplace par ton vrai chemin de Space
-          repo_id = '${{ secrets.HF_USERNAME }}/Credit_Score' 
-          
-          print(f'Début de l\'upload du dossier vers {repo_id}...')
-          
+
+          # ── Connexion à l'API HF ──────────────────────────────────────────
+          api     = HfApi(token=os.environ["HF_TOKEN"])
+          repo_id = f"{os.environ['HF_USERNAME']}/Credit_Score"
+
+          print(f"📤 Upload vers {repo_id}...")
+
+          # ── Upload du dossier courant vers le Space ───────────────────────
+          # ignore_patterns : fichiers inutiles au déploiement
           api.upload_folder(
-              folder_path='.',
+              folder_path=".",
               repo_id=repo_id,
-              repo_type='space',
-              # On ignore les fichiers inutiles pour le déploiement
+              repo_type="space",
               ignore_patterns=[
-                  '.git*',
-                  'ML/mlruns/',
-                  'mlruns/',
-                  'utilitaires/mlflow.db',
-                  '__pycache__/',
-                  'tests/'
+                  ".git*",           # métadonnées Git
+                  ".github/",        # workflows CI/CD
+                  "mlruns/",         # artefacts MLflow
+                  "utilitaires/",    # notebooks et outils locaux
+                  "__pycache__/",    # cache Python
+                  "*.pyc",
+                  "tests/",          # tests non nécessaires en prod
+                  "*.md",            # README local (HF a le sien)
+                  "uv.lock",         # lockfile uv non nécessaire
+                  "pyproject.toml",  # config locale non nécessaire
               ],
-              # Supprime sur HF les fichiers qui n'existent plus sur GitHub (nettoyage)
-              delete_disappeared_files=True
+              # Supprime sur HF les fichiers qui n'existent plus localement
+              delete_disappeared_files=True,
+              commit_message=f"deploy: {os.environ.get('GITHUB_SHA', 'manual')[:8]}",
           )
-          print('Déploiement réussi !')
-          "
+
+          print("✅ Déploiement réussi !")
+          EOF
+
+      - name: Vérifier que l'API répond sur HF (/health)
+        env:
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+        run: |
+          # Attendre que HF reconstruise et démarre le conteneur (max 120s)
+          URL="https://${HF_USERNAME}-credit-score.hf.space/health"
+          echo "🔍 Vérification sur $URL"
+          for i in $(seq 1 20); do
+            curl -sf "$URL" && echo "✅ API opérationnelle sur Hugging Face" && exit 0
+            echo "⏳ Attente reconstruction HF... ($i/20)"
+            sleep 6
+          done
+          echo "❌ API non disponible après 120s"
+          exit 1
