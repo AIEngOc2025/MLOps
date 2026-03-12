@@ -25,7 +25,6 @@ jobs:
     name: 🐳 Build & Push
     runs-on: ubuntu-latest
     needs: test
-    # On ne pousse sur Docker Hub que depuis main ou dev (pas les PRs)
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
@@ -56,29 +55,37 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: true # Crucial : récupère les vrais fichiers LFS pour les renvoyer à HF
 
-      - name: Configurer Git, LFS, README et Pousser vers Hugging Face
+      - name: Installer et configurer git-xet (global)
+        run: |
+          # Installation de git-xet
+          curl --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/huggingface/xet-core/refs/heads/main/git_xet/install.sh \
+            | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+          # Configuration globale Git : identité
+          git config --global user.email "ci@github.com"
+          git config --global user.name "GitHub Actions"
+
+          # Configuration globale Git : désactiver LFS, activer xet
+          git config --global lfs.enabled false
+          git config --global filter.xet.process "git-xet filter-process"
+          git config --global filter.xet.required true
+
+      - name: Déployer vers Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # 1. Identité Git (Global pour éviter les erreurs d'ident)
-          git config --global user.email "ci@github.com"
-          git config --global user.name "GitHub Actions"
+          # Supprimer toute trace de LFS dans .gitattributes
+          sed -i '/filter=lfs/d' .gitattributes 2>/dev/null || true
 
-          # 2. Installation et configuration LFS
-          git lfs install
-          git config --global lfs.allowincompletepush true
-
-          # 3. Branche locale : s'assurer qu'on s'appelle 'main'
-          git checkout -b main || git checkout main
-
-          # 4. Nettoyage de l'index
+          # Nettoyage des fichiers MLflow (inutiles sur HF)
           git rm -r --cached ML/mlruns/ 2>/dev/null || true
           git rm -r --cached mlruns/ 2>/dev/null || true
 
-          # 5. Création du README pour Hugging Face
+          # Création du README Hugging Face
           cat <<EOF > README.md
           ---
           title: Credit Score API
@@ -91,24 +98,16 @@ jobs:
           ---
           # Credit Scoring API
           Déploiement automatique via GitHub Actions.
-          Mise à jour : $(date)
           EOF
 
-          # 6. Gestion LFS et Ajout des fichiers
-          git lfs track "*.db"
-          git lfs track "models/*.joblib"
-          git lfs track "models/*.pkl"
-          git lfs track "utilitaires/credit_score.db"
-          
+          # Ajout sélectif des fichiers
           git add .gitattributes README.md Dockerfile requirements.txt src/
-          git add --renormalize utilitaires/credit_score.db 2>/dev/null || true
+          git add utilitaires/credit_score.db
           git add models/*.joblib models/*.pkl 2>/dev/null || true
-          
-          # On ajoute le reste (le code src, etc.)
           git add .
 
-          # 7. Commit unique
+          # Commit unique
           git commit -m "deploy: build ${{ github.sha }}" || echo "No changes to commit"
 
-          # 8. Push vers Hugging Face (Utilisation de l'URL avec authentification)
+          # Push vers Hugging Face (git-xet gère les binaires automatiquement)
           git push --force https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score main
