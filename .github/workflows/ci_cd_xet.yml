@@ -42,7 +42,8 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:latest \
             .
           docker push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          docker push ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}:latest 
+          
 
   # --- JOB 3 : DEPLOY TO HUGGING FACE ---
   deploy:
@@ -55,11 +56,13 @@ jobs:
         run: |
           curl -fSSML https://huggingface.co/install-xet.sh | bash
           echo "$HOME/.xet" >> $GITHUB_PATH
+          # Export immédiat pour le bloc courant
+          export PATH="$HOME/.xet:$PATH"
 
       - name: Récupérer le code source GitHub
         uses: actions/checkout@v4
         with:
-          path: github_repo # On met le code GitHub dans un dossier spécifique
+          path: github_repo
           fetch-depth: 0
           lfs: false
 
@@ -68,36 +71,34 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # 1. Configuration Git globale
+          # 0. S'assurer que git-xet est accessible
+          export PATH="$HOME/.xet:$PATH"
           git config --global user.email "ci@github.com"
           git config --global user.name "GitHub Actions"
           git xet install --local
           
-          # 2. Clonage du Space HF dans un dossier 'hf_space'
-          # On utilise le token directement dans l'URL
+          # 1. Clonage propre du Space
           git clone https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score hf_space
           
-          # 3. Synchronisation des fichiers (GitHub -> HF)
-          # On utilise rsync pour copier tout SAUF le dossier .git de GitHub
-          # Cela permet de garder l'historique .git propre de Hugging Face
+          # 2. Synchronisation (Le slash après github_repo/ est important)
           rsync -av --delete --exclude='.git' github_repo/ hf_space/
 
           cd hf_space
 
-          # 4. Initialisation XET dans le dossier HF
+          # 3. Migration XET et Nettoyage
           git xet init
-          
-          # 5. Nettoyage des résidus LFS et MLflow dans le nouveau dossier
           sed -i '/filter=lfs/d' .gitattributes 2>/dev/null || true
+          
+          # Nettoyage profond des index
           git rm -r --cached ML/mlruns/ mlruns/ 2>/dev/null || true
           git rm --cached utilitaires/mlflow.db 2>/dev/null || true
 
-          # 6. Configuration des attributs XET
+          # 4. Configuration des attributs
           echo "*.db filter=xet -text" > .gitattributes
           echo "models/*.joblib filter=xet -text" >> .gitattributes
           echo "models/*.pkl filter=xet -text" >> .gitattributes
 
-          # 7. Création du README HF (obligatoire)
+          # 5. README HF
           cat <<EOF > README.md
           ---
           title: Credit Score API
@@ -106,12 +107,12 @@ jobs:
           xet: true
           ---
           # API Sync via CI/CD
+          Dernier build: ${{ github.sha }}
           EOF
 
-          # 8. Commit et Push
+          # 6. Commit et Push
           git add .
           git add --renormalize .
           git commit -m "sync: github to hf via xet ${{ github.sha }}" || echo "No changes"
           
-          # On pousse vers la branche main de Hugging Face
           git push origin main
