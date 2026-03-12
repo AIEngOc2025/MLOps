@@ -53,16 +53,24 @@ jobs:
     steps:
       - name: Installer git-xet AVANT le checkout
         run: |
-          # Installation — git-xet s'installe dans /usr/local/bin
+          # Installation
           curl --proto '=https' --tlsv1.2 -sSf \
             https://raw.githubusercontent.com/huggingface/xet-core/refs/heads/main/git_xet/install.sh \
             | sh
+
+          # Détecter où git-xet a été installé et l'ajouter au PATH
+          GIT_XET_PATH=$(find /usr /home/runner ~/.local -name "git-xet" -type f 2>/dev/null | head -1)
+          echo "git-xet trouvé à : $GIT_XET_PATH"
+          echo "$(dirname $GIT_XET_PATH)" >> $GITHUB_PATH
 
           # Identité Git globale
           git config --global user.email "ci@github.com"
           git config --global user.name "GitHub Actions"
 
-          # Initialisation globale de git-xet (configure hooks et filtres)
+      - name: Vérifier git-xet et initialiser
+        run: |
+          which git-xet
+          git-xet --version
           git-xet install --global
 
       - name: Récupérer le code source
