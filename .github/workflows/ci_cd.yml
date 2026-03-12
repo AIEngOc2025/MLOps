@@ -57,7 +57,25 @@ jobs:
         run: |
           # 1. Installation et configuration LFS
           git lfs install
-          git config lfs.allowincompletepush true
+          # ... (après l'installation de git lfs)
+
+          # 1. On s'assure que le fichier .db est bien suivi par LFS
+          git lfs track "utilitaires/credit_score.db"
+          git lfs track "*.db"
+          
+          # 2. IMPORTANT : On force Git à considérer le .gitattributes en premier
+          git add .gitattributes
+          
+          # 3. On "rafraîchit" le fichier dans l'index Git
+          # Cela force Git à transformer le vrai fichier en pointeur LFS
+          git add --renormalize utilitaires/credit_score.db
+          
+          # 4. On ajoute le reste et on commit
+          git add .
+          git commit -m "deploy: force LFS for sqlite database" || echo "No changes"
+          
+          # 5. Push
+          git push --force https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score main
           
           # 2. Identité Git
           git config user.email "ci@github.com"
