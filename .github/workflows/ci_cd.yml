@@ -152,7 +152,7 @@ jobs:
                   "pyproject.toml",  # config locale non nécessaire
               ],
               # Supprime sur HF les fichiers qui n'existent plus localement
-              delete_disappeared_files=True,
+              
               commit_message=f"deploy: {os.environ.get('GITHUB_SHA', 'manual')[:8]}",
           )
 
@@ -164,7 +164,7 @@ jobs:
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
           # Attendre que HF reconstruise et démarre le conteneur (max 120s)
-          URL="https://datachaser-credit-score.hf.space/health"
+          URL="https://$(echo ${HF_USERNAME} | tr '[:upper:]' '[:lower:]')-credit-score.hf.space/health"
           echo "🔍 Vérification sur $URL"
           for i in $(seq 1 20); do
             curl -sf "$URL" && echo "✅ API opérationnelle sur Hugging Face" && exit 0
