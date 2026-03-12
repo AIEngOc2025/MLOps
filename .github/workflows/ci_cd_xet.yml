@@ -54,10 +54,18 @@ jobs:
     steps:
       - name: Installer git-xet
         run: |
-          curl -fSSML https://huggingface.co/install-xet.sh | bash
+          # Téléchargement direct sans passer par le script interactif
+          curl -fSSML https://huggingface.co/install-xet.sh -o install-xet.sh
+          chmod +x install-xet.sh
+          # On lance l'installateur en mode silencieux
+          ./install-xet.sh > /dev/null 2>&1 || true
+          
+          # On force le chemin si l'installateur l'a mis dans le dossier par défaut
+          mkdir -p $HOME/.xet
+          # Ajout au PATH permanent de GitHub Actions
           echo "$HOME/.xet" >> $GITHUB_PATH
-          # Export immédiat pour le bloc courant
-          export PATH="$HOME/.xet:$PATH"
+          # Export pour les commandes immédiates si nécessaire
+          echo "PATH=$HOME/.xet:$PATH" >> $GITHUB_ENV
 
       - name: Récupérer le code source GitHub
         uses: actions/checkout@v4
