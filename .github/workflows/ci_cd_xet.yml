@@ -42,85 +42,63 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:latest \
             .
           docker push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          docker push ${{ env.IMAGE_NAME }}:latest 
-          
+          docker push ${{ env.IMAGE_NAME }}:latest
 
   # --- JOB 3 : DEPLOY TO HUGGING FACE ---
   deploy:
-    name: 🚀 Sync vers Hugging Face (via Clone)
+    name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
     needs: build
+    # Déploiement uniquement sur push vers main ou dev
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
-      - name: Installer git-xet
-        run: |
-          # Téléchargement direct sans passer par le script interactif
-          curl -fSSML https://huggingface.co/install-xet.sh -o install-xet.sh
-          chmod +x install-xet.sh
-          # On lance l'installateur en mode silencieux
-          ./install-xet.sh > /dev/null 2>&1 || true
-          
-          # On force le chemin si l'installateur l'a mis dans le dossier par défaut
-          mkdir -p $HOME/.xet
-          # Ajout au PATH permanent de GitHub Actions
-          echo "$HOME/.xet" >> $GITHUB_PATH
-          # Export pour les commandes immédiates si nécessaire
-          echo "PATH=$HOME/.xet:$PATH" >> $GITHUB_ENV
-
-      - name: Récupérer le code source GitHub
+      - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
-          path: github_repo
           fetch-depth: 0
-          lfs: false
+          lfs: true # On récupère les vrais fichiers pour l'upload
 
-      - name: Cloner HF, Synchroniser et Pousser
+      - name: Configurer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer Hugging Face Hub
+        run: pip install huggingface_hub
+
+      - name: Upload vers Hugging Face Spaces
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # 0. S'assurer que git-xet est accessible
-          export PATH="$HOME/.xet:$PATH"
-          git config --global user.email "ci@github.com"
-          git config --global user.name "GitHub Actions"
-          git xet install --local
+          if [ -z "$HF_TOKEN" ]; then
+            echo "ERREUR : Le secret HF_TOKEN est absent."
+            exit 1
+          fi
+          python -c "
+          import os
+          from huggingface_hub import HfApi
           
-          # 1. Clonage propre du Space
-          git clone https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score hf_space
+          api = HfApi(token=os.environ['HF_TOKEN'])
+          # Remplace par ton vrai chemin de Space
+          repo_id = '${{ secrets.HF_USERNAME }}/Credit_Score' 
           
-          # 2. Synchronisation (Le slash après github_repo/ est important)
-          rsync -av --delete --exclude='.git' github_repo/ hf_space/
-
-          cd hf_space
-
-          # 3. Migration XET et Nettoyage
-          git xet init
-          sed -i '/filter=lfs/d' .gitattributes 2>/dev/null || true
+          print(f'Début de l\'upload du dossier vers {repo_id}...')
           
-          # Nettoyage profond des index
-          git rm -r --cached ML/mlruns/ mlruns/ 2>/dev/null || true
-          git rm --cached utilitaires/mlflow.db 2>/dev/null || true
-
-          # 4. Configuration des attributs
-          echo "*.db filter=xet -text" > .gitattributes
-          echo "models/*.joblib filter=xet -text" >> .gitattributes
-          echo "models/*.pkl filter=xet -text" >> .gitattributes
-
-          # 5. README HF
-          cat <<EOF > README.md
-          ---
-          title: Credit Score API
-          sdk: docker
-          app_port: 7860
-          xet: true
-          ---
-          # API Sync via CI/CD
-          Dernier build: ${{ github.sha }}
-          EOF
-
-          # 6. Commit et Push
-          git add .
-          git add --renormalize .
-          git commit -m "sync: github to hf via xet ${{ github.sha }}" || echo "No changes"
-          
-          git push origin main
+          api.upload_folder(
+              folder_path='.',
+              repo_id=repo_id,
+              repo_type='space',
+              # On ignore les fichiers inutiles pour le déploiement
+              ignore_patterns=[
+                  '.git*',
+                  'ML/mlruns/',
+                  'mlruns/',
+                  'utilitaires/mlflow.db',
+                  '__pycache__/',
+                  'tests/'
+              ],
+              # Supprime sur HF les fichiers qui n'existent plus sur GitHub (nettoyage)
+              delete_disappeared_files=True
+          )
+          print('Déploiement réussi !')
+          "
