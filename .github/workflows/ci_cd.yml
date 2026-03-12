@@ -56,11 +56,12 @@ jobs:
         run: |
           # 1. Installation de Git LFS
           git lfs install
+          git config lfs.allowincompletepush true
           
           # 2. Configuration de l'identité Git
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
-          git config lfs.allowincompletepush true
+          
 
           # 3. Création forcée du README.md avec les métadonnées YAML pour HF
           # Cela évite le "Configuration Error" en forçant le mode Docker
