@@ -53,25 +53,23 @@ jobs:
     steps:
       - name: Installer git-xet AVANT le checkout
         run: |
-          # Installation de git-xet
+          # Installation — git-xet s'installe dans /usr/local/bin
           curl --proto '=https' --tlsv1.2 -sSf \
             https://raw.githubusercontent.com/huggingface/xet-core/refs/heads/main/git_xet/install.sh \
             | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
           # Identité Git globale
           git config --global user.email "ci@github.com"
           git config --global user.name "GitHub Actions"
 
-          # Initialisation globale de git-xet (remplace git lfs install)
-          # git xet install configure les hooks et filtres nécessaires globalement
-          "$HOME/.local/bin/git-xet" install --global
+          # Initialisation globale de git-xet (configure hooks et filtres)
+          git-xet install --global
 
       - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: false  # On désactive le checkout LFS natif de l'action
+          lfs: false
 
       - name: Déployer vers Hugging Face
         env:
@@ -82,7 +80,7 @@ jobs:
           sed -i 's/filter=lfs diff=lfs merge=lfs -text/filter=xet diff=xet merge=xet -text/g' .gitattributes 2>/dev/null || true
           sed -i 's/filter=lfs/filter=xet/g' .gitattributes 2>/dev/null || true
 
-          # Déclarer .db comme fichier xet (si pas encore dans .gitattributes)
+          # Déclarer les extensions binaires pour xet
           git xet track "*.db"
           git xet track "models/*.joblib"
           git xet track "models/*.pkl"
