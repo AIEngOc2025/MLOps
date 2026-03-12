@@ -68,7 +68,7 @@ jobs:
         run: |
           which git-xet
           git-xet --version
-          git-xet install --global
+          git-xet install --local
 
       - name: Récupérer le code source
         uses: actions/checkout@v4
