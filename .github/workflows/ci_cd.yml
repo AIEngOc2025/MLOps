@@ -80,7 +80,7 @@ jobs:
           # 2. Identité Git
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
-
+          
           # 3. NETTOYAGE CRITIQUE : on retire les fichiers MLflow de l'index Git
           # Cela évite que Git ne cherche des objets LFS inexistants ou corrompus
           git rm -r --cached ML/mlruns/ 2>/dev/null || true
