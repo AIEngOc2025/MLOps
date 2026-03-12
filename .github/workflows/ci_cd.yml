@@ -38,6 +38,7 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:latest
 
   # --- JOB 3 : DEPLOY TO HUGGING FACE ---
+
   deploy:
     name: 🚀 Déploiement Hugging Face
     runs-on: ubuntu-latest
@@ -54,17 +55,20 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # 1. Installation de Git LFS
+          # 1. Installation et configuration LFS
           git lfs install
           git config lfs.allowincompletepush true
           
-          # 2. Configuration de l'identité Git
+          # 2. Identité Git
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
-          
 
-          # 3. Création forcée du README.md avec les métadonnées YAML pour HF
-          # Cela évite le "Configuration Error" en forçant le mode Docker
+          # 3. NETTOYAGE CRITIQUE : on retire les fichiers MLflow de l'index Git
+          # Cela évite que Git ne cherche des objets LFS inexistants ou corrompus
+          git rm -r --cached ML/mlruns/ 2>/dev/null || true
+          git rm -r --cached mlruns/ 2>/dev/null || true
+
+          # 4. Création du README pour HF
           cat <<EOF > README.md
           ---
           title: Credit Score API
@@ -75,23 +79,21 @@ jobs:
           app_port: 7860
           pinned: false
           ---
-
           # Credit Scoring API
           Déploiement automatique via GitHub Actions.
           EOF
 
-          # 4. Déclaration LFS et ajout des fichiers
-          git lfs track "*.joblib"
-          git lfs track "*.pkl"
+          # 5. Déclaration LFS ciblée (on évite de tracker tout le projet)
+          git lfs track "models/*.joblib"
+          git lfs track "models/*.pkl"
           git lfs track "*.db"
           
-          git add .gitattributes README.md
+          # 6. Ajout sélectif des fichiers nécessaires
+          git add .gitattributes README.md Dockerfile requirements.txt src/
           git add models/*.joblib models/*.pkl 2>/dev/null || true
           
-          # 5. Commit et Push
-          # On s'assure d'être sur la branche main localement pour le push
+          # 7. Préparation de la branche et Push
           git checkout -b main || git checkout main
-          git commit -m "deploy: update model, metadata and app ${{ github.sha }}" || echo "No changes to commit"
+          git commit -m "deploy: stable build without mlflow logs ${{ github.sha }}" || echo "No changes"
           
-          # Push vers le repository Space de Hugging Face
           git push --force https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score main
