@@ -53,50 +53,46 @@ jobs:
     steps:
       - name: Installer git-xet AVANT le checkout
         run: |
+          # Installation de git-xet
           curl --proto '=https' --tlsv1.2 -sSf \
             https://raw.githubusercontent.com/huggingface/xet-core/refs/heads/main/git_xet/install.sh \
             | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-          # Config globale identité + désactivation LFS + activation XET
-          # Fait AVANT le checkout pour éviter que LFS ne s'initialise
+          # Identité Git globale
           git config --global user.email "ci@github.com"
           git config --global user.name "GitHub Actions"
-          git config --global lfs.enabled false
-          git config --global lfs.skipdownload true
-          git config --global filter.lfs.clean "git-lfs clean -- %f"
-          git config --global filter.lfs.smudge "git-lfs smudge --skip -- %f"
-          git config --global filter.lfs.process "git-lfs filter-process --skip"
-          git config --global filter.lfs.required false
-          git config --global filter.xet.process "git-xet filter-process"
-          git config --global filter.xet.required true
+
+          # Initialisation globale de git-xet (remplace git lfs install)
+          # git xet install configure les hooks et filtres nécessaires globalement
+          "$HOME/.local/bin/git-xet" install --global
 
       - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Désactive le LFS du checkout action lui-même
-          lfs: false
+          lfs: false  # On désactive le checkout LFS natif de l'action
 
       - name: Déployer vers Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # Désinstaller LFS au niveau du repo (écrase les hooks)
-          git lfs uninstall 2>/dev/null || true
-
-          # Migrer les fichiers binaires : retirer le filtre LFS du .gitattributes
-          # et le remplacer par le filtre XET
+          # Retirer les règles LFS du .gitattributes et les remplacer par xet
           sed -i 's/filter=lfs diff=lfs merge=lfs -text/filter=xet diff=xet merge=xet -text/g' .gitattributes 2>/dev/null || true
           sed -i 's/filter=lfs/filter=xet/g' .gitattributes 2>/dev/null || true
+
+          # Déclarer .db comme fichier xet (si pas encore dans .gitattributes)
+          git xet track "*.db"
+          git xet track "models/*.joblib"
+          git xet track "models/*.pkl"
 
           # Nettoyage des fichiers MLflow (inutiles sur HF)
           git rm -r --cached ML/mlruns/ 2>/dev/null || true
           git rm -r --cached mlruns/ 2>/dev/null || true
           git rm --cached utilitaires/mlflow.db 2>/dev/null || true
 
-          # Forcer la ré-indexation du .db avec le filtre XET
+          # Forcer la ré-indexation du .db avec le filtre xet
           git rm --cached utilitaires/credit_score.db 2>/dev/null || true
           git add utilitaires/credit_score.db
 
