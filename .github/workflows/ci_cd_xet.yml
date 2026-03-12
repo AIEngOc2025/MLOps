@@ -46,60 +46,50 @@ jobs:
 
   # --- JOB 3 : DEPLOY TO HUGGING FACE ---
   deploy:
-    name: 🚀 Déploiement Hugging Face
+    name: 🚀 Déploiement Hugging Face (XET Mode)
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
-      - name: Installer git-xet AVANT le checkout
+      - name: Installer git-xet
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf \
-            https://raw.githubusercontent.com/huggingface/xet-core/refs/heads/main/git_xet/install.sh \
-            | sh
-
-          GIT_XET_PATH=$(find /usr /home/runner ~/.local -name "git-xet" -type f 2>/dev/null | head -1)
-          echo "git-xet trouvé à : $GIT_XET_PATH"
-          echo "$(dirname $GIT_XET_PATH)" >> $GITHUB_PATH
-
-          git config --global user.email "ci@github.com"
-          git config --global user.name "GitHub Actions"
-
-      - name: Vérifier git-xet et initialiser
-        run: |
-          which git-xet
-          git-xet --version
-          git-xet install --local
+          curl -fSSML https://huggingface.co/install-xet.sh | bash
+          # On s'assure que le binaire est dans le PATH de l'étape suivante
+          echo "$HOME/.xet" >> $GITHUB_PATH
 
       - name: Récupérer le code source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: false
+          lfs: false # On ne télécharge PAS les objets LFS pour éviter les erreurs "missing"
 
-      - name: Déployer vers Hugging Face
+      - name: Configurer et Pousser vers Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USER: ${{ secrets.HF_USERNAME }}
         run: |
-          # Retirer les règles LFS du .gitattributes et les remplacer par xet
-          sed -i 's/filter=lfs diff=lfs merge=lfs -text/filter=xet diff=xet merge=xet -text/g' .gitattributes 2>/dev/null || true
-          sed -i 's/filter=lfs/filter=xet/g' .gitattributes 2>/dev/null || true
+          # 1. Identité et Initialisation XET
+          git config --global user.email "ci@github.com"
+          git config --global user.name "GitHub Actions"
+          git xet install --local
+          
+          # 2. Désactivation brutale de LFS (pour ignorer les résidus MLflow)
+          git config --local lfs.enabled false
+          git config --global lfs.enabled false
 
-          # Déclarer les extensions binaires pour xet
-          git xet track "*.db"
-          git xet track "models/*.joblib"
-          git xet track "models/*.pkl"
+          # 3. Réinitialisation des attributs (Migration LFS -> XET)
+          rm -f .gitattributes
+          git xet init
+          echo "*.db filter=xet -text" >> .gitattributes
+          echo "models/*.joblib filter=xet -text" >> .gitattributes
+          echo "models/*.pkl filter=xet -text" >> .gitattributes
 
-          # Nettoyage des fichiers MLflow (inutiles sur HF)
-          git rm -r --cached ML/mlruns/ 2>/dev/null || true
-          git rm -r --cached mlruns/ 2>/dev/null || true
+          # 4. Nettoyage de l'index Git (on retire les fichiers fantômes)
+          git rm -r --cached ML/mlruns/ mlruns/ 2>/dev/null || true
           git rm --cached utilitaires/mlflow.db 2>/dev/null || true
-
-          # Forcer la ré-indexation du .db avec le filtre xet
           git rm --cached utilitaires/credit_score.db 2>/dev/null || true
-          git add utilitaires/credit_score.db
 
-          # Création du README Hugging Face
+          # 5. Création du README pour Hugging Face (Indispensable)
           cat <<EOF > README.md
           ---
           title: Credit Score API
@@ -108,19 +98,23 @@ jobs:
           colorTo: green
           sdk: docker
           app_port: 7860
-          pinned: false
+          xet: true
           ---
           # Credit Scoring API
-          Déploiement automatique via GitHub Actions.
+          Déploiement via XET pour une gestion optimisée des données.
           EOF
 
-          # Ajout sélectif des fichiers
+          # 6. Ajout des fichiers et ré-indexation XET
           git add .gitattributes README.md Dockerfile requirements.txt src/
-          git add models/*.joblib models/*.pkl 2>/dev/null || true
-          git add .
+          git add utilitaires/credit_score.db
+          git add models/ 2>/dev/null || true
+          
+          # Force Git à appliquer le filtre XET sur les fichiers binaires
+          git add --renormalize .
 
-          # Commit unique
-          git commit -m "deploy: migrate LFS→XET, build ${{ github.sha }}" || echo "No changes to commit"
-
-          # Push HEAD (branche courante) vers main sur Hugging Face
+          # 7. Commit et Push Forcé
+          git checkout -b main || git checkout main
+          git commit -m "deploy: hardware migration to xet ${{ github.sha }}" || echo "No changes"
+          
+          # On utilise HEAD:main pour être sûr de viser la branche de prod de HF
           git push --force https://$HF_USER:$HF_TOKEN@huggingface.co/spaces/$HF_USER/Credit_Score HEAD:main
