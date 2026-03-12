@@ -98,6 +98,7 @@ jobs:
           git lfs track "*.db"
           git lfs track "models/*.joblib"
           git lfs track "models/*.pkl"
+          git lfs track "utilitaires/credit_score.db"
           
           git add .gitattributes README.md Dockerfile requirements.txt src/
           git add --renormalize utilitaires/credit_score.db 2>/dev/null || true
