@@ -1,6 +1,15 @@
 """
-Credit Scoring API — FastAPI
+Credit Scoring API — FastAPI + Gradio
 Modèle : LightGBM | 10 features | Seuil métier : 0.48
+
+Routes :
+  GET  /          → message de bienvenue
+  GET  /health    → statut de l'API
+  POST /predict   → prédiction unitaire
+  POST /predict/batch → prédiction batch (max 100)
+  GET  /logs/stats    → statistiques des logs
+  POST /logs/flush    → force le push des logs vers HF Dataset
+  GET  /ui        → interface Gradio
 
 Logging structuré :
   - Chaque appel /predict est loggé en mémoire
@@ -19,10 +28,12 @@ from threading import Lock
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
+import gradio as gr
 import joblib
 import pandas as pd
 import numpy as np
 import os
+import requests
 
 app = FastAPI(
     title="Credit Scoring API",
@@ -36,77 +47,56 @@ MODELS_DIR        = os.path.join(BASE_DIR, "models/")
 OPTIMAL_THRESHOLD = float(os.getenv("OPTIMAL_THRESHOLD", 0.48))
 
 # ─── CONFIGURATION LOGGING ────────────────────────────────────────────────────
-# Nombre de requêtes avant un push vers HF Dataset
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", 30))
-
-# Identifiants HF — injectés via variables d'environnement (secrets)
+BATCH_SIZE    = int(os.getenv("BATCH_SIZE", 30))
 HF_TOKEN      = os.getenv("HF_TOKEN")
 HF_USERNAME   = os.getenv("HF_USERNAME")
 HF_DATASET_ID = f"{HF_USERNAME}/credit-score-logs" if HF_USERNAME else None
 
-# Fallback local si HF est indisponible
 LOGS_DIR        = Path(BASE_DIR) / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 PREDICTIONS_LOG = LOGS_DIR / "predictions.jsonl"
 
-# Logger Python standard
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # ─── BUFFER DE LOGS EN MÉMOIRE ────────────────────────────────────────────────
-# Liste partagée entre les requêtes — protégée par un Lock thread-safe
 _log_buffer: list = []
 _buffer_lock = Lock()
 
 
 def flush_logs_to_hf(entries: list) -> bool:
-    """
-    Pousse le buffer de logs vers Hugging Face Dataset.
-    Retourne True si succès, False si échec (fallback local).
-
-    Stratégie :
-      1. Télécharger le fichier JSONL existant sur HF (si présent)
-      2. Ajouter les nouvelles entrées
-      3. Repousser le fichier mis à jour
-    """
+    """Push le buffer de logs vers Hugging Face Dataset."""
     if not HF_TOKEN or not HF_DATASET_ID:
         logger.warning("⚠️  HF_TOKEN ou HF_USERNAME manquant — fallback local")
         return False
-
     try:
         from huggingface_hub import HfApi
         import tempfile
 
-        api       = HfApi(token=HF_TOKEN)
-        hf_file   = "predictions.jsonl"
+        api = HfApi(token=HF_TOKEN)
 
-        # ── Télécharger les logs existants sur HF ──────────────────────────
         existing_lines = []
         try:
             local_path = api.hf_hub_download(
                 repo_id=HF_DATASET_ID,
-                filename=hf_file,
+                filename="predictions.jsonl",
                 repo_type="dataset",
             )
             with open(local_path, "r") as f:
                 existing_lines = f.readlines()
         except Exception:
-            # Fichier inexistant sur HF — première fois
             logger.info("📄 Création du fichier de logs sur HF Dataset")
 
-        # ── Ajouter les nouvelles entrées ──────────────────────────────────
         new_lines = [json.dumps(e, ensure_ascii=False) + "\n" for e in entries]
         all_lines = existing_lines + new_lines
 
-        # ── Réécrire le fichier complet et pousser ─────────────────────────
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
             tmp.writelines(all_lines)
             tmp_path = tmp.name
 
         api.upload_file(
             path_or_fileobj=tmp_path,
-            path_in_repo=hf_file,
+            path_in_repo="predictions.jsonl",
             repo_id=HF_DATASET_ID,
             repo_type="dataset",
             commit_message=f"logs: +{len(entries)} prédictions",
@@ -121,7 +111,7 @@ def flush_logs_to_hf(entries: list) -> bool:
 
 
 def save_logs_locally(entries: list) -> None:
-    """Fallback — sauvegarde les logs localement si HF est indisponible."""
+    """Fallback — sauvegarde les logs localement."""
     try:
         with open(PREDICTIONS_LOG, "a") as f:
             for entry in entries:
@@ -132,29 +122,19 @@ def save_logs_locally(entries: list) -> None:
 
 
 def log_prediction(entry: dict) -> None:
-    """
-    Ajoute une entrée au buffer en mémoire.
-    Si le buffer atteint BATCH_SIZE → flush vers HF Dataset.
-    Thread-safe via Lock.
-    """
+    """Ajoute une entrée au buffer. Flush vers HF si BATCH_SIZE atteint."""
     global _log_buffer
-
     with _buffer_lock:
         _log_buffer.append(entry)
-
-        # ── Push si batch complet ──────────────────────────────────────────
         if len(_log_buffer) >= BATCH_SIZE:
             batch = _log_buffer.copy()
-            _log_buffer = []   # vider le buffer avant le push
-
-            # Push HF — fallback local si échec
+            _log_buffer = []
             success = flush_logs_to_hf(batch)
             if not success:
                 save_logs_locally(batch)
 
 
 # ─── CHARGEMENT DES ARTEFACTS ─────────────────────────────────────────────────
-# Chargement UNE SEULE FOIS au démarrage
 try:
     preprocessor      = joblib.load(os.path.join(MODELS_DIR, "preprocessor.pkl"))
     SELECTED_FEATURES = joblib.load(os.path.join(MODELS_DIR, "selected_features.pkl"))
@@ -188,31 +168,29 @@ class CreditResponse(BaseModel):
     model_available:     bool
 
 
-# ─── ENDPOINTS ────────────────────────────────────────────────────────────────
+# ─── ENDPOINTS FASTAPI ────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"message": "Credit Scoring API — voir /docs pour la documentation."}
+    return {"message": "Credit Scoring API — voir /docs pour la documentation, /ui pour l'interface."}
 
 
 @app.get("/health")
 def health():
     return {
-        "status":           "ok",
-        "model_loaded":     model is not None,
-        "features_count":   len(SELECTED_FEATURES),
-        "threshold":        OPTIMAL_THRESHOLD,
-        "buffer_size":      len(_log_buffer),   # logs en attente de push
-        "batch_size":       BATCH_SIZE,
-        "hf_dataset":       HF_DATASET_ID,
+        "status":         "ok",
+        "model_loaded":   model is not None,
+        "features_count": len(SELECTED_FEATURES),
+        "threshold":      OPTIMAL_THRESHOLD,
+        "buffer_size":    len(_log_buffer),
+        "batch_size":     BATCH_SIZE,
+        "hf_dataset":     HF_DATASET_ID,
     }
 
 
 @app.post("/predict", response_model=CreditResponse)
 def predict(data: CreditRequest):
     start_time = time.time()
-
     try:
-        # ── Prédiction ────────────────────────────────────────────────────────
         input_dict = {f: getattr(data, f, None) for f in SELECTED_FEATURES}
         input_df   = pd.DataFrame([input_dict], columns=SELECTED_FEATURES)
 
@@ -241,9 +219,7 @@ def predict(data: CreditRequest):
             "model_available":     model is not None,
         }
 
-        # ── Logging APRÈS la prédiction ───────────────────────────────────────
         latency_ms = round((time.time() - start_time) * 1000, 2)
-
         log_prediction({
             "timestamp":              datetime.now(timezone.utc).isoformat(),
             "latency_ms":             latency_ms,
@@ -276,18 +252,13 @@ def predict_batch(data: List[CreditRequest]):
     return [predict(item) for item in data]
 
 
-# ─── ENDPOINT DE MONITORING ───────────────────────────────────────────────────
 @app.get("/logs/stats")
 def logs_stats():
-    """Statistiques basiques sur les logs — buffer en mémoire + logs locaux."""
     stats = {
-        "buffer_pending":  len(_log_buffer),
-        "batch_size":      BATCH_SIZE,
-        "hf_dataset":      HF_DATASET_ID,
-        "local_log_file":  str(PREDICTIONS_LOG),
+        "buffer_pending": len(_log_buffer),
+        "batch_size":     BATCH_SIZE,
+        "hf_dataset":     HF_DATASET_ID,
     }
-
-    # Stats sur les logs locaux si présents
     if PREDICTIONS_LOG.exists():
         lines = PREDICTIONS_LOG.read_text().strip().splitlines()
         if lines:
@@ -301,25 +272,79 @@ def logs_stats():
                 "local_avg_proba":   round(sum(probas) / len(probas), 4),
                 "local_avg_latency": round(sum(latencies) / len(latencies), 2),
             })
-
     return stats
 
 
 @app.post("/logs/flush")
 def flush_logs():
-    """
-    Force le push immédiat du buffer vers HF Dataset.
-    Utile pour vider le buffer avant un redémarrage du conteneur.
-    """
     with _buffer_lock:
         if not _log_buffer:
             return {"message": "Buffer vide — rien à pusher"}
         batch = _log_buffer.copy()
         _log_buffer.clear()
-
     success = flush_logs_to_hf(batch)
     if not success:
         save_logs_locally(batch)
-        return {"message": f"{len(batch)} logs sauvegardés localement (HF indisponible)"}
-
+        return {"message": f"{len(batch)} logs sauvegardés localement"}
     return {"message": f"✅ {len(batch)} logs pushés vers {HF_DATASET_ID}"}
+
+
+# ─── INTERFACE GRADIO ─────────────────────────────────────────────────────────
+# URL de l'API — pointe vers l'API locale dans le même conteneur
+API_URL = os.getenv("API_URL", "http://127.0.0.1:7860/predict")
+
+
+def predict_gradio(ext1, ext2, ext3, credit, annuity, employed, goods, birth, phone, income):
+    """Fonction appelée par Gradio — appelle /predict en interne."""
+    payload = {
+        "EXT_SOURCE_1": ext1,  "EXT_SOURCE_2": ext2,  "EXT_SOURCE_3": ext3,
+        "AMT_CREDIT": credit,  "AMT_ANNUITY": annuity, "DAYS_EMPLOYED": employed,
+        "AMT_GOODS_PRICE": goods, "DAYS_BIRTH": birth,
+        "DAYS_LAST_PHONE_CHANGE": phone, "AMT_INCOME_TOTAL": income,
+    }
+    try:
+        response = requests.post(API_URL, json=payload, timeout=5)
+        if response.status_code != 200:
+            return f"⚠️ Erreur API ({response.status_code}) : {response.json().get('detail', 'Erreur inconnue')}"
+        res       = response.json()
+        status    = "✅ ACCORDÉ" if res["prediction"] == 0 else "❌ REFUSÉ"
+        proba     = f"Probabilité de défaut : {res['probability_default']:.2%}"
+        risk      = f"Niveau de risque : {res['risk_label']}"
+        threshold = f"Seuil de décision : {res['threshold_used']}"
+        return f"{status}\n\n{proba}\n{risk}\n{threshold}"
+    except requests.exceptions.ConnectionError:
+        return "❌ Impossible de joindre l'API."
+    except requests.exceptions.Timeout:
+        return "⏱️ Timeout (5s)."
+    except Exception as e:
+        return f"Erreur inattendue : {e}"
+
+
+# Définition de l'interface Gradio
+gradio_app = gr.Interface(
+    fn=predict_gradio,
+    inputs=[
+        gr.Slider(0, 1, step=0.01, value=0.5, label="EXT_SOURCE_1"),
+        gr.Slider(0, 1, step=0.01, value=0.5, label="EXT_SOURCE_2"),
+        gr.Slider(0, 1, step=0.01, value=0.5, label="EXT_SOURCE_3"),
+        gr.Number(label="Montant Crédit (AMT_CREDIT)",          value=100000, minimum=0),
+        gr.Number(label="Annuité (AMT_ANNUITY)",                value=5000,   minimum=0),
+        gr.Number(label="Jours employés (négatif)",             value=-1000,  maximum=0),
+        gr.Number(label="Prix des biens (AMT_GOODS_PRICE)",     value=80000,  minimum=0),
+        gr.Number(label="Âge en jours (négatif)",               value=-15000, maximum=0),
+        gr.Number(label="Dernier changement tél. (jours nég.)", value=-100,   maximum=0),
+        gr.Number(label="Revenu Total (AMT_INCOME_TOTAL)",      value=50000,  minimum=0),
+    ],
+    outputs=gr.Textbox(label="Résultat de la prédiction", lines=5),
+    title="🏦 Simulateur de Crédit — Scoring Client",
+    description=(
+        "Entrez les caractéristiques du client pour obtenir une prédiction de risque de défaut. "
+        "Les champs en jours doivent être **négatifs** (ex: -15000 jours = ~41 ans)."
+    ),
+    flagging_mode="never",
+)
+
+# ─── MONTAGE GRADIO SUR FASTAPI ───────────────────────────────────────────────
+# L'interface Gradio est accessible sur /ui
+# Le reste de l'API FastAPI reste intact sur /predict, /health, /docs
+app = gr.mount_gradio_app(app, gradio_app, path="/ui")
