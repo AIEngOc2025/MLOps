@@ -2,25 +2,25 @@
 Credit Scoring API — FastAPI + Gradio
 Modèle : LightGBM | 10 features | Seuil métier : 0.48
 
-Optimisation ETAPE4 :
-  - Pipeline numpy pur au lieu de sklearn au runtime (+56.9% de gain)
-  - SimpleImputer + StandardScaler remplacés par numpy.where + arithmetic
-  - Paramètres extraits une seule fois au chargement, réutilisés à chaque requête
-  - Résultat : 0.935ms → 0.403ms par prédiction (benchmark 200 itérations)
+Optimisations ETAPE4 :
+  1. Pipeline numpy pur (V3)    : +56.9% sur preprocessing
+  2. ONNX Runtime               : gain supplémentaire sur l'inférence
+     → Chargé si models/model.onnx existe
+     → Fallback automatique vers LightGBM si ONNX indisponible
+
+Logique de chargement :
+  - Si model.onnx existe  → ONNX Runtime (optimal)
+  - Sinon                 → LightGBM sklearn (fallback)
+  - /health indique quel moteur est actif
 
 Routes :
   GET  /          → message de bienvenue
-  GET  /health    → statut de l'API
+  GET  /health    → statut + moteur d'inférence actif
   POST /predict   → prédiction unitaire
   POST /predict/batch → prédiction batch (max 100)
   GET  /logs/stats    → statistiques des logs
   POST /logs/flush    → force le push des logs vers HF Dataset
   GET  /ui        → interface Gradio
-
-Logging structuré :
-  - Chaque appel /predict est loggé en mémoire
-  - Toutes les BATCH_SIZE requêtes → push vers Hugging Face Dataset
-  - Fallback local : logs/predictions.jsonl si HF est indisponible
 """
 
 import time
@@ -44,7 +44,7 @@ import requests
 app = FastAPI(
     title="Credit Scoring API",
     description="API de scoring crédit basée sur LightGBM (Home Credit dataset)",
-    version="2.0.0",
+    version="2.1.0",
 )
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
@@ -109,9 +109,7 @@ def flush_logs_to_hf(entries: list) -> bool:
             commit_message=f"logs: +{len(entries)} prédictions",
         )
 
-        # Nettoyage du fichier temporaire
         os.unlink(tmp_path)
-
         logger.info(f"✅ {len(entries)} logs pushés vers {HF_DATASET_ID}")
         return True
 
@@ -132,18 +130,13 @@ def save_logs_locally(entries: list) -> None:
 
 
 def log_prediction(entry: dict) -> None:
-    """
-    Ajoute une entrée au buffer.
-    Flush vers HF dans un thread séparé si BATCH_SIZE atteint.
-    Le thread daemon évite de bloquer la réponse API.
-    """
+    """Ajoute une entrée au buffer. Flush en thread daemon si BATCH_SIZE atteint."""
     global _log_buffer
     with _buffer_lock:
         _log_buffer.append(entry)
         if len(_log_buffer) >= BATCH_SIZE:
-            batch        = _log_buffer.copy()
-            _log_buffer  = []
-            # Push dans un thread séparé — ne bloque pas la réponse API
+            batch       = _log_buffer.copy()
+            _log_buffer = []
             def _push():
                 success = flush_logs_to_hf(batch)
                 if not success:
@@ -157,47 +150,76 @@ def log_prediction(entry: dict) -> None:
 try:
     preprocessor      = joblib.load(os.path.join(MODELS_DIR, "preprocessor.pkl"))
     SELECTED_FEATURES = joblib.load(os.path.join(MODELS_DIR, "selected_features.pkl"))
-    model_path        = os.path.join(MODELS_DIR, "model.onnx")
+    model_path        = os.path.join(MODELS_DIR, "model.joblib")
     model             = joblib.load(model_path) if os.path.exists(model_path) else None
 
-    # ── Extraction des paramètres du Pipeline sklearn ─────────────────────────
-    # Ces paramètres sont extraits UNE SEULE FOIS et réutilisés à chaque requête
-    # → bypass sklearn au runtime → gain de 56.9% sur le preprocessing
-    IMPUTE_VALUES = preprocessor.named_steps["imputer"].statistics_  # médianes
-    SCALE_MEAN    = preprocessor.named_steps["scaler"].mean_          # moyenne
-    SCALE_STD     = preprocessor.named_steps["scaler"].scale_         # écart-type
+    # ── Paramètres numpy pour preprocessing optimisé ──────────────────────────
+    IMPUTE_VALUES = preprocessor.named_steps["imputer"].statistics_
+    SCALE_MEAN    = preprocessor.named_steps["scaler"].mean_
+    SCALE_STD     = preprocessor.named_steps["scaler"].scale_
 
-    logger.info("✅ Artefacts chargés — pipeline numpy optimisé actif")
+    logger.info("✅ Artefacts LightGBM chargés")
 except Exception as e:
     logger.error(f"⚠️  Erreur chargement artefacts : {e}")
     model, preprocessor, SELECTED_FEATURES = None, None, []
     IMPUTE_VALUES = SCALE_MEAN = SCALE_STD = None
 
 
+# ─── CHARGEMENT ONNX RUNTIME (optionnel) ──────────────────────────────────────
+# Si models/model.onnx existe → ONNX Runtime est utilisé pour l'inférence
+# Sinon → fallback automatique vers LightGBM sklearn
+onnx_session  = None
+INFERENCE_ENGINE = "lightgbm"  # sera mis à jour si ONNX chargé
+
+onnx_model_path = os.path.join(MODELS_DIR, "model.onnx")
+if os.path.exists(onnx_model_path):
+    try:
+        import onnxruntime as rt
+        onnx_session     = rt.InferenceSession(onnx_model_path)
+        INFERENCE_ENGINE = "onnx_runtime"
+        logger.info(f"✅ ONNX Runtime chargé — moteur actif : {INFERENCE_ENGINE}")
+    except Exception as e:
+        logger.warning(f"⚠️  ONNX Runtime indisponible ({e}) — fallback LightGBM")
+        onnx_session     = None
+        INFERENCE_ENGINE = "lightgbm_fallback"
+else:
+    logger.info("ℹ️  models/model.onnx absent — LightGBM actif")
+
+
 # ─── PIPELINE NUMPY OPTIMISÉ ──────────────────────────────────────────────────
 def numpy_preprocess(data: "CreditRequest") -> np.ndarray:
     """
     Reproduit Pipeline(SimpleImputer → StandardScaler) en numpy pur.
-    Bypass toute la validation sklearn (check_array, _validate_input).
-
-    Benchmark : 0.570ms → ~0.100ms sur l'étape preprocessing.
-
-    Étapes :
-      1. Extraire les valeurs du payload dans l'ordre exact des features
-      2. Remplacer les None/NaN par les médianes d'entraînement
-      3. Normaliser : (x - mean) / std
+    Gain mesuré : +56.9% vs sklearn au runtime.
     """
-    # Étape 1 — extraction dans l'ordre exact des features
     values = np.array(
         [[getattr(data, f) if getattr(data, f) is not None else np.nan
           for f in SELECTED_FEATURES]],
         dtype=np.float64
     )
-    # Étape 2 — imputation (SimpleImputer.statistics_)
-    X = np.where(np.isnan(values), IMPUTE_VALUES, values)
-    # Étape 3 — normalisation (StandardScaler)
-    X = (X - SCALE_MEAN) / SCALE_STD
+    X = np.where(np.isnan(values), IMPUTE_VALUES, values)  # imputation
+    X = (X - SCALE_MEAN) / SCALE_STD                       # scaling
     return X
+
+
+def run_inference(X: np.ndarray) -> float:
+    """
+    Lance l'inférence selon le moteur disponible.
+    Priorité : ONNX Runtime > LightGBM sklearn
+    """
+    if onnx_session is not None:
+        # ── ONNX Runtime — float32 requis ────────────────────────────────────
+        input_name  = onnx_session.get_inputs()[0].name
+        onnx_output = onnx_session.run(None, {input_name: X.astype(np.float32)})
+        return float(onnx_output[1][0][1])   # proba classe 1
+
+    elif model is not None:
+        # ── LightGBM sklearn — DataFrame avec noms pour éviter le warning ────
+        X_df = pd.DataFrame(X, columns=SELECTED_FEATURES)
+        return float(model.predict_proba(X_df)[0][1])
+
+    else:
+        return 0.5  # fallback si aucun modèle disponible
 
 
 # ─── SCHÉMAS ──────────────────────────────────────────────────────────────────
@@ -225,20 +247,24 @@ class CreditResponse(BaseModel):
 # ─── ENDPOINTS FASTAPI ────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"message": "Credit Scoring API v2.0 — /docs pour la documentation, /ui pour l'interface."}
+    return {
+        "message": "Credit Scoring API v2.1 — /docs pour la documentation, /ui pour l'interface.",
+        "inference_engine": INFERENCE_ENGINE,
+    }
 
 
 @app.get("/health")
 def health():
     return {
-        "status":         "ok",
-        "model_loaded":   model is not None,
-        "features_count": len(SELECTED_FEATURES),
-        "threshold":      OPTIMAL_THRESHOLD,
-        "buffer_size":    len(_log_buffer),
-        "batch_size":     BATCH_SIZE,
-        "hf_dataset":     HF_DATASET_ID,
-        "inference_engine": "onnx_runtime",   # indicateur de version
+        "status":            "ok",
+        "model_loaded":      model is not None or onnx_session is not None,
+        "features_count":    len(SELECTED_FEATURES),
+        "threshold":         OPTIMAL_THRESHOLD,
+        "buffer_size":       len(_log_buffer),
+        "batch_size":        BATCH_SIZE,
+        "hf_dataset":        HF_DATASET_ID,
+        "pipeline":          "numpy_optimized_v3",
+        "inference_engine":  INFERENCE_ENGINE,  # ← moteur actif visible ici
     }
 
 
@@ -246,11 +272,10 @@ def health():
 def predict(data: CreditRequest):
     start_time = time.time()
     try:
-        if model is not None and IMPUTE_VALUES is not None:
-            # ── Pipeline optimisé V3 ──────────────────────────────────────────
+        if IMPUTE_VALUES is not None:
+            # ── Pipeline optimisé V3 + inférence selon moteur disponible ──────
             X     = numpy_preprocess(data)
-            X_df  = pd.DataFrame(X, columns=SELECTED_FEATURES)
-            proba = float(model.predict_proba(X_df)[0][1])
+            proba = run_inference(X)
         else:
             proba = 0.5
 
@@ -270,7 +295,7 @@ def predict(data: CreditRequest):
             "probability_default": round(proba, 4),
             "risk_label":          risk_label,
             "threshold_used":      OPTIMAL_THRESHOLD,
-            "model_available":     model is not None,
+            "model_available":     model is not None or onnx_session is not None,
         }
 
         latency_ms = round((time.time() - start_time) * 1000, 2)
@@ -309,10 +334,10 @@ def predict_batch(data: List[CreditRequest]):
 @app.get("/logs/stats")
 def logs_stats():
     stats = {
-        "buffer_pending": len(_log_buffer),
-        "batch_size":     BATCH_SIZE,
-        "hf_dataset":     HF_DATASET_ID,
-        "pipeline":       "numpy_optimized_v3",
+        "buffer_pending":   len(_log_buffer),
+        "batch_size":       BATCH_SIZE,
+        "hf_dataset":       HF_DATASET_ID,
+        "inference_engine": INFERENCE_ENGINE,
     }
     if PREDICTIONS_LOG.exists():
         lines = PREDICTIONS_LOG.read_text().strip().splitlines()
