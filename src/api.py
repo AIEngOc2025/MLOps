@@ -157,7 +157,7 @@ def log_prediction(entry: dict) -> None:
 try:
     preprocessor      = joblib.load(os.path.join(MODELS_DIR, "preprocessor.pkl"))
     SELECTED_FEATURES = joblib.load(os.path.join(MODELS_DIR, "selected_features.pkl"))
-    model_path        = os.path.join(MODELS_DIR, "model.joblib")
+    model_path        = os.path.join(MODELS_DIR, "model.onnx")
     model             = joblib.load(model_path) if os.path.exists(model_path) else None
 
     # ── Extraction des paramètres du Pipeline sklearn ─────────────────────────
@@ -238,7 +238,7 @@ def health():
         "buffer_size":    len(_log_buffer),
         "batch_size":     BATCH_SIZE,
         "hf_dataset":     HF_DATASET_ID,
-        "pipeline":       "numpy_optimized_v3",   # indicateur de version
+        "inference_engine": "onnx_runtime",   # indicateur de version
     }
 
 
