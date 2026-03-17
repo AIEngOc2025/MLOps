@@ -1,6 +1,6 @@
 """
 profiling/convert_to_onnx.py — Conversion du modèle LightGBM vers ONNX
-═══════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════
 Convertit le pipeline sklearn (SimpleImputer + StandardScaler + LightGBM)
 en modèle ONNX pour utilisation avec ONNX Runtime.
 
