@@ -1,7 +1,6 @@
 import os
 import time
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,7 +14,7 @@ from pydantic import BaseModel, Field
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ajustement du chemin pour pointer vers le dossier 'models' à la racine depuis 'src/'
+# Ajustement du chemin pour pointer vers /models à la racine depuis /src
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
 LOGS_DIR = BASE_DIR / "logs"
@@ -30,7 +29,6 @@ class ScoringEngine:
         self.threshold = threshold
         self.ready = False
         try:
-            # Chargement des artefacts du modèle
             self.preprocessor = joblib.load(models_path / "preprocessor.pkl")
             self.features = joblib.load(models_path / "selected_features.pkl")
             self.model = joblib.load(models_path / "model.joblib")
@@ -46,7 +44,7 @@ class ScoringEngine:
         # 1. Création du DataFrame initial
         df = pd.DataFrame([data_dict])
         
-        # 2. Complétion des colonnes manquantes (valide test_predict_all_none_fields)
+        # 2. Complétion des colonnes manquantes (pour test_predict_all_none_fields)
         for col in self.features:
             if col not in df.columns:
                 df[col] = 0.0
@@ -54,19 +52,18 @@ class ScoringEngine:
         # 3. Alignement strict sur l'ordre des colonnes d'entraînement
         df_ordered = df[self.features]
         
-        # 4. Transformation via le préprocesseur
+        # 4. Transformation
         X_transformed = self.preprocessor.transform(df_ordered)
         
-        # 5. RECONSTRUCTION DU DATAFRAME AVEC NOMS (Supprime le UserWarning LGBM)
-        # On repasse un DataFrame nommé au modèle au lieu d'un array NumPy brut
+        # 5. RECONSTRUCTION DU DATAFRAME AVEC NOMS (Fix UserWarning)
+        # On passe un DataFrame nommé au modèle au lieu d'un array NumPy
         X_final = pd.DataFrame(X_transformed, columns=self.features)
         
-        # 6. Inférence de probabilité
+        # 6. Inférence
         proba = float(self.model.predict_proba(X_final)[0][1])
         return proba, int(proba >= self.threshold)
 
     def get_risk_label(self, proba: float):
-        # Labels de risque conformes aux attentes de l'API
         if proba < 0.2: return "Très faible risque"
         if proba < self.threshold: return "Risque modéré"
         if proba < 0.7: return "Risque élevé"
@@ -76,7 +73,6 @@ engine = ScoringEngine(MODELS_DIR, OPTIMAL_THRESHOLD)
 
 # --- SCHÉMAS DE DONNÉES ---
 class CreditRequest(BaseModel):
-    # Les champs sont Optionnels pour valider test_predict_all_none_fields
     EXT_SOURCE_1: Optional[float] = Field(None, ge=0, le=1)
     EXT_SOURCE_2: Optional[float] = Field(None, ge=0, le=1)
     EXT_SOURCE_3: Optional[float] = Field(None, ge=0, le=1)
@@ -112,7 +108,7 @@ async def predict(data: CreditRequest):
     
     try:
         raw_data = data.model_dump()
-        # Gestion des None : on remplace par 0.0 pour assurer la stabilité du moteur
+        # Gestion des None pour la robustesse
         clean_data = {k: (v if v is not None else 0.0) for k, v in raw_data.items()}
         
         proba, pred = engine.predict(clean_data)
@@ -128,7 +124,7 @@ async def predict(data: CreditRequest):
 
 @app.post("/predict/batch")
 async def predict_batch(data: List[CreditRequest]):
-    """Répond aux tests batch_nominal et batch_limit_exceeded"""
+    """Répond aux tests batch"""
     if len(data) > 100:
         raise HTTPException(status_code=400, detail="Batch trop volumineux (max 100)")
     
@@ -146,7 +142,7 @@ def predict_ui(*args):
     proba, _ = engine.predict(data_dict)
     return engine.get_risk_label(proba)
 
-# Utilisation d'une compréhension de liste pour éviter DuplicateBlockError
+# Utilisation d'une compréhension pour éviter DuplicateBlockError
 ui = gr.Interface(
     fn=predict_ui, 
     inputs=[gr.Number(label=k) for k in CreditRequest.model_fields.keys()], 
