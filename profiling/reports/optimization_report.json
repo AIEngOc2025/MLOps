@@ -1,0 +1,38 @@
+{
+  "baseline_ms": 0.935,
+  "iterations": 200,
+  "results": [
+    {
+      "label": "V1 \u2014 Original (baseline)",
+      "mean_ms": 0.935,
+      "min_ms": 0.855,
+      "max_ms": 2.983,
+      "p95_ms": 1.037,
+      "p99_ms": 2.627
+    },
+    {
+      "label": "V2 \u2014 Fix warning DataFrame",
+      "mean_ms": 1.04,
+      "min_ms": 0.948,
+      "max_ms": 3.186,
+      "p95_ms": 1.133,
+      "p99_ms": 2.846
+    },
+    {
+      "label": "V3 \u2014 Numpy impute + scale",
+      "mean_ms": 0.403,
+      "min_ms": 0.382,
+      "max_ms": 1.556,
+      "p95_ms": 0.432,
+      "p99_ms": 0.656
+    },
+    {
+      "label": "V4 \u2014 Full optim (no sklearn runtime)",
+      "mean_ms": 0.42,
+      "min_ms": 0.382,
+      "max_ms": 1.371,
+      "p95_ms": 0.441,
+      "p99_ms": 1.213
+    }
+  ]
+}

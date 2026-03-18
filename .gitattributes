@@ -51,4 +51,7 @@ Dockerfile !text !filter !merge !diff
 *.yml !text !filter !merge !diff
 requirements.txt !text !filter !merge !diff
 pyproject.toml !text !filter !merge !diff
+*.py !text !filter !merge !diff
+README.md !text !filter !merge !diff
 * !text !filter !merge !diff
+utilitaires/credit_score.db filter=lfs diff=lfs merge=lfs -text
