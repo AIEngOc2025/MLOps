@@ -169,10 +169,10 @@ def validate_consistency(preprocessor, features, model,
                           fill_values, scale_mean, scale_std) -> bool:
     """
     Vérifie que toutes les versions donnent la même probabilité.
-    CRITIQUE : l'optimisation ne doit jamais changer les prédictions.
+    CRITIQUE : vérifier que l'optimisation ne change pas  les prédictions.
     Tolérance : 1e-5 (différences numériques float acceptables).
     """
-    logger.info("🔍 Validation de la cohérence des prédictions...")
+    logger.info(" Validation de la cohérence des prédictions...")
 
     p1 = pipeline_v1_original(SAMPLE_PAYLOAD, preprocessor, features, model)
     p2 = pipeline_v2_fix_warning(SAMPLE_PAYLOAD, preprocessor, features, model)
@@ -190,7 +190,7 @@ def validate_consistency(preprocessor, features, model,
     ok = all(abs(p - p1) < tolerance for p in [p2, p3, p4])
 
     if ok:
-        logger.info("✅ Toutes les versions sont cohérentes")
+        logger.info("Toutes les versions sont cohérentes")
     else:
         logger.error("❌ INCOHÉRENCE — optimisation invalide")
         for label, p in [("V2", p2), ("V3", p3), ("V4", p4)]:
@@ -281,7 +281,7 @@ def main():
             pipeline_v1_original(SAMPLE_PAYLOAD, preprocessor, features, model)
 
     # ── Benchmark ─────────────────────────────────────────────────────────────
-    logger.info(f"⏱️  Benchmark {args.n} itérations par version...")
+    logger.info(f" Benchmark {args.n} itérations par version...")
 
     results = []
     with warnings.catch_warnings():
@@ -316,7 +316,7 @@ def main():
         "iterations":  args.n,
         "results":     results,
     }
-    report_path = REPORTS_DIR / "reports" / "profiling" / "optimization_report.json"
+    report_path = REPORTS_DIR / "optimization_report.json"
     report_path.write_text(json.dumps(report, indent=2))
     logger.info(f"✅ Rapport : {report_path}")
 

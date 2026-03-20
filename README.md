@@ -6,25 +6,35 @@ Système de scoring crédit basé sur **LightGBM**, exposé via une **API FastAP
 
 ## Structure du projet
 
+La structure a été organisée pour séparer clairement les différentes responsabilités du projet MLOps.
+
 ```
 MLOps/
 ├── src/
-│   ├── api.py               # API FastAPI (endpoints /health, /predict, /predict/batch)
-│   └── gradio_ui.py         # Interface Gradio (simulateur client)
+│   └── api.py               # API FastAPI (endpoints /health, /predict, /predict/batch)
 ├── models/
-│   ├── model.joblib         # Modèle LightGBM entraîné (10 features)
+│   ├── model.joblib         # Modèle LightGBM entraîné
 │   ├── preprocessor.pkl     # Pipeline sklearn (imputation + normalisation)
-│   └── selected_features.pkl# Liste ordonnée des 10 features
+│   └── selected_features.pkl# Liste ordonnée des features
 ├── tests/
 │   └── test_api.py          # Tests unitaires et d'intégration (pytest)
-├── notebooks/
-│   └── fine_tuning.ipynb    # Entraînement, fine-tuning, sélection du modèle
+├── monitoring/
+│   ├── drift_analysis.py    # Scripts pour l'analyse de la dérive des données
+│   └── reports/             # Rapports générés (HTML, images)
+├── profiling/
+│   ├── optimize_pipeline.py # Scripts pour le profilage et l'optimisation
+│   └── reports/             # Rapports de profilage
+├── utilitaires/
+│   └── engine.py            # Scripts utilitaires divers
+├── data/
+│   └── ...                  # Données brutes et traitées
 ├── .github/
 │   └── workflows/
 │       └── ci-cd.yml        # Pipeline CI/CD GitHub Actions
 ├── Dockerfile               # Build multi-stage (dependencies → test → app)
-├── docker-compose.yml       # Orchestration API + Gradio
-├── requirements-docker.txt  # Dépendances Python
+├── compose.yml              # Orchestration de l'API avec Docker Compose
+├── pyproject.toml           # Gestion des dépendances et configuration du projet
+├── requirements.txt         # Dépendances Python (peut être redondant avec pyproject.toml)
 ├── .gitignore
 └── README.md
 ```
@@ -56,7 +66,7 @@ MLOps/
 
 ---
 
-##  Lancement rapide
+## Lancement rapide
 
 ### Prérequis
 
@@ -67,20 +77,17 @@ MLOps/
 ### En local
 
 ```bash
-# 1. Installer les dépendances
-pip install -r requirements-docker.txt
+# 1. Installer les dépendances (de préférence dans un environnement virtuel)
+pip install -r requirements.txt
 
 # 2. Lancer l'API
-uvicorn app.api:app --reload
-
-# 3. Lancer l'interface Gradio (dans un second terminal)
-python src/gradio_ui.py
+uvicorn src.api:app --reload
 ```
 
 ### Avec Docker Compose
 
 ```bash
-# Build et démarrage de l'API + Gradio
+# Build et démarrage de l'API
 docker compose up --build
 
 # En arrière-plan
@@ -91,7 +98,6 @@ docker compose up -d --build
 |---|---|
 | API FastAPI | http://localhost:8000 |
 | Documentation Swagger | http://localhost:8000/docs |
-| Interface Gradio | http://localhost:7860 |
 
 ---
 
@@ -156,7 +162,7 @@ curl -X POST http://localhost:8000/predict/batch \
 pytest tests/ -v
 
 # Avec rapport de couverture
-pytest tests/ -v --cov=app --cov-report=term-missing
+pytest tests/ -v --cov=src --cov-report=term-missing
 ```
 
 Les tests couvrent : health check, prédiction unitaire, batch, labels de risque (4 niveaux), limite batch à 100, et les cas clients à risque faible/élevé. Tous les tests utilisent des **mocks** — aucun fichier `.pkl` requis pour les faire tourner.
@@ -224,13 +230,13 @@ Déploiement ──► Smoke tests /health + /predict sur le conteneur
 |---|---|---|
 | `OPTIMAL_THRESHOLD` | `0.48` | Seuil de décision métier |
 | `PYTHONUNBUFFERED` | `1` | Logs en temps réel dans Docker |
-| `API_URL` | `http://127.0.0.1:8000` | URL de l'API pour le dashboard Gradio |
+| `API_URL` | `http://127.0.0.1:8000` | URL de l'API (utilisé par certains scripts) |
 
 ---
 
 ##  Régénérer les modèles
 
-Si les artefacts `models/` sont absents ou corrompus, relancez la cellule de sauvegarde dans `notebooks/fine_tuning.ipynb` :
+Si les artefacts `models/` sont absents ou corrompus, exécutez le notebook ou le script d'entraînement approprié. Exemple de logique de sauvegarde :
 
 ```python
 import joblib, os
@@ -248,7 +254,8 @@ preprocessor = Pipeline([
     ('imputer', SimpleImputer(strategy='median')),
     ('scaler', StandardScaler())
 ])
-preprocessor.fit(X_train[EXPECTED_FEATURES])
+# Assurez-vous d'entraîner le préprocesseur avec vos données d'entraînement
+# preprocessor.fit(X_train[EXPECTED_FEATURES])
 
 joblib.dump(EXPECTED_FEATURES,          'models/selected_features.pkl')
 joblib.dump(preprocessor,              'models/preprocessor.pkl')
